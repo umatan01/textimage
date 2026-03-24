@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>专业文本对比工具 (V11 双视图增强版) - 支持Docx/PDF</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/ant-design-vue/1.7.8/antd.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
+    
+    <style>
+        /* 保持原有样式 */
+        body { background-color: #f0f2f5; padding: 20px; font-family: -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica Neue,Arial; }
+        .container { background: #fff; padding: 24px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); max-width: 1400px; margin: 0 auto; }
+        .diff-container { display: flex; gap: 20px; margin-top: 20px; }
+        .diff-box { flex: 1; position: relative; }
+        .upload-bar { margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+        textarea.ant-input { font-family: 'Consolas', 'Monaco', monospace; height: 300px !important; }
+        .diff-view-wrapper { margin-top: 20px; border: 1px solid #d9d9d9; border-radius: 4px; overflow: hidden; background: #fff; }
+        /* 对比高亮样式 */
+        .diff-line { display: flex; border-bottom: 1px solid #f0f0f0; min-height: 24px; font-family: monospace; }
+        .line-num { width: 40px; background: #f5f5f5; text-align: right; padding-right: 8px; color: #999; user-select: none; border-right: 1px solid #e8e8e8; }
+        .line-content { flex: 1; padding: 0 8px; white-space: pre-wrap; word-break: break-all; }
+        .del-bg { background-color: #fff1f0; }
+        .ins-bg { background-color: #f6ffed; }
+        .side-del { background-color: #ffccc7; text-decoration: line-through; }
+        .side-ins { background-color: #b7eb8f; }
+        /* 图片显示样式 */
+        .line-content img { max-width: 200px; max-height: 150px; display: inline-block; vertical-align: middle; border: 1px solid #eee; }
+    </style>
+</head>
+<body>
+    <div id="app" class="container">
+        <h2>专业文本对比工具 (V11 双视图版)</h2>
+        <a-alert message="提示：现在支持上传 Word (.docx) 和 PDF 文档进行文字及图片的识别对比。" type="info" show-icon style="margin-bottom: 16px;"></a-alert>
+
+        <div class="diff-container">
+            <div class="diff-box">
+                <div class="upload-bar">
+                    <span><b>旧版本 / 原文本</b></span>
+                    <a-button size="small" icon="upload" @click="triggerUpload('left')">上传文档 (Docx/PDF)</a-button>
+                    <input type="file" id="file-left" accept=".docx,.pdf" style="display:none" @change="handleFileUpload($event, 'left')">
+                </div>
+                <a-textarea v-model="oldText" placeholder="请输入或上传旧文本..." :auto-size="{ minRows: 10, maxRows: 15 }"></a-textarea>
+            </div>
+
+            <div class="diff-box">
+                <div class="upload-bar">
+                    <span><b>新版本 / 修改后</b></span>
+                    <a-button size="small" icon="upload" @click="triggerUpload('right')">上传文档 (Docx/PDF)</a-button>
+                    <input type="file" id="file-right" accept=".docx,.pdf" style="display:none" @change="handleFileUpload($event, 'right')">
+                </div>
+                <a-textarea v-model="newText" placeholder="请输入或上传新文本..." :auto-size="{ minRows: 10, maxRows: 15 }"></a-textarea>
+            </div>
+        </div>
+
+        <div style="margin-top: 20px; text-align: center;">
+            <a-button type="primary" size="large" @click="compareText" :loading="comparing">开始对比</a-button>
+            <a-button style="margin-left: 10px;" @click="clearAll">清空</a-button>
+        </div>
+
+        <div v-if="hasResult" class="diff-view-wrapper">
+            <div style="padding: 10px; background: #fafafa; border-bottom: 1px solid #ddd;">
+                <a-statistic-group>
+                    <a-row :gutter="16">
+                        <a-col :span="8"><a-statistic title="增加项" :value="stats.add" value-style="color: #3f8600" /></a-col>
+                        <a-col :span="8"><a-statistic title="删除项" :value="stats.del" value-style="color: #cf1322" /></a-col>
+                    </a-row>
+                </a-statistic-group>
+            </div>
+            
+            <div id="diff-output" style="display: flex;">
+                <div style="flex: 1; border-right: 1px solid #ddd;" ref="leftView">
+                    <div v-for="(line, idx) in diffView.left" :key="'l'+idx" :class="['diff-line', line.type === 'del' ? 'del-bg' : '']">
+                        <div class="line-num">{{ line.num }}</div>
+                        <div class="line-content" v-html="line.content"></div>
+                    </div>
+                </div>
+                <div style="flex: 1;" ref="rightView">
+                    <div v-for="(line, idx) in diffView.right" :key="'r'+idx" :class="['diff-line', line.type === 'ins' ? 'ins-bg' : '']">
+                        <div class="line-num">{{ line.num }}</div>
+                        <div class="line-content" v-html="line.content"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/2.6.14/vue.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ant-design-vue/1.7.8/antd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/diff-match-patch/1.0.5/index.min.js"></script>
+
+    <script>
+        new Vue({
+            el: '#app',
+            data: {
+                oldText: '',
+                newText: '',
+                comparing: false,
+                hasResult: false,
+                stats: { add: 0, del: 0 },
+                diffView: { left: [], right: [] }
+            },
+            methods: {
+                triggerUpload(side) {
+                    document.getElementById(`file-${side}`).click();
+                },
+                async handleFileUpload(event, side) {
+                    const file = event.target.files[0];
+                    if (!file) return;
+
+                    const extension = file.name.split('.').pop().toLowerCase();
+                    const reader = new FileReader();
+
+                    this.$message.loading(`正在解析 ${file.name}...`, 0);
+
+                    if (extension === 'docx') {
+                        reader.onload = async (e) => {
+                            try {
+                                const result = await mammoth.convertToHtml({ arrayBuffer: e.target.result });
+                                if (side === 'left') this.oldText = result.value;
+                                else this.newText = result.value;
+                                this.$message.destroy();
+                                this.$message.success('Word解析成功');
+                            } catch (err) {
+                                this.$message.error('Word解析失败');
+                            }
+                        };
+                        reader.readAsArrayBuffer(file);
+                    } else if (extension === 'pdf') {
+                        reader.onload = async (e) => {
+                            try {
+                                const typedarray = new Uint8Array(e.target.result);
+                                const pdf = await pdfjsLib.getDocument(typedarray).promise;
+                                let fullText = "";
+                                for (let i = 1; i <= pdf.numPages; i++) {
+                                    const page = await pdf.getPage(i);
+                                    const textContent = await page.getTextContent();
+                                    fullText += textContent.items.map(item => item.str).join(' ') + "\n";
+                                }
+                                if (side === 'left') this.oldText = fullText;
+                                else this.newText = fullText;
+                                this.$message.destroy();
+                                this.$message.success('PDF解析成功');
+                            } catch (err) {
+                                this.$message.error('PDF解析失败');
+                            }
+                        };
+                        reader.readAsArrayBuffer(file);
+                    } else {
+                        this.$message.error('不支持的文件格式');
+                    }
+                },
+                compareText() {
+                    if (!this.oldText && !this.newText) return this.$message.warning('请先输入或上传内容');
+                    this.comparing = true;
+                    
+                    setTimeout(() => {
+                        const dmp = new diff_match_patch();
+                        const diffs = dmp.diff_main(this.oldText, this.newText);
+                        dmp.diff_cleanupSemantic(diffs);
+
+                        // 构建双视图逻辑
+                        let leftLines = [], rightLines = [];
+                        let lNum = 1, rNum = 1;
+
+                        this.stats.add = 0;
+                        this.stats.del = 0;
+
+                        diffs.forEach(part => {
+                            const [type, value] = part;
+                            if (type === 0) { // 相等
+                                leftLines.push({ num: lNum++, content: value, type: 'eq' });
+                                rightLines.push({ num: rNum++, content: value, type: 'eq' });
+                            } else if (type === -1) { // 删除
+                                leftLines.push({ num: lNum++, content: `<span class="side-del">${value}</span>`, type: 'del' });
+                                this.stats.del++;
+                            } else if (type === 1) { // 插入
+                                rightLines.push({ num: rNum++, content: `<span class="side-ins">${value}</span>`, type: 'ins' });
+                                this.stats.add++;
+                            }
+                        });
+
+                        this.diffView.left = leftLines;
+                        this.diffView.right = rightLines;
+                        this.hasResult = true;
+                        this.comparing = false;
+                        this.$message.success('对比完成');
+                    }, 500);
+                },
+                clearAll() {
+                    this.oldText = '';
+                    this.newText = '';
+                    this.hasResult = false;
+                }
+            }
+        });
+    </script>
+</body>
+</html>
